@@ -1,37 +1,1821 @@
-import UniversalAuth from 'universal-auth';
+# GMF-CIAM-SDK Documentation for Angular
 
-// Configure Auth0
-const auth0Config = {
+A comprehensive Auth0 authentication SDK designed specifically for Angular applications with enhanced error handling and TypeScript support.
+
+## Table of Contents
+
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Angular Integration](#angular-integration)
+- [Authentication Methods](#authentication-methods)
+- [Profile Management](#profile-management)
+- [Password Management](#password-management)
+- [Error Handling](#error-handling)
+- [TypeScript Support](#typescript-support)
+- [Angular Examples](#angular-examples)
+- [API Reference](#api-reference)
+- [Best Practices](#best-practices)
+- [Troubleshooting](#troubleshooting)
+
+## Installation
+
+### NPM
+```bash
+npm install GMF-CIAM-sdk
+```
+
+### Yarn
+```bash
+yarn add GMF-CIAM-sdk
+```
+
+## Quick Start
+
+### Basic Angular Setup
+
+```typescript
+// app.component.ts
+import { Component, OnInit } from '@angular/core';
+import GMFCIAMAuth, { AuthProvider, AuthError } from 'GMF-CIAM-sdk';
+
+@Component({
+  selector: 'app-root',
+  templateUrl: './app.component.html'
+})
+export class AppComponent implements OnInit {
+  authProvider: AuthProvider | null = null;
+  isAuthenticated = false;
+  user: any = null;
+
+  async ngOnInit() {
+    await this.initializeAuth();
+  }
+
+  async initializeAuth() {
+    try {
+      // Initialize Auth0 provider
+      this.authProvider = await GMFCIAMAuth.createAuthProvider('auth0', {
+        domain: 'your-domain.auth0.com',
+        clientId: 'your-client-id',
+        audience: 'your-api-identifier',
+        redirectUri: window.location.origin
+      });
+
+      // Set up error handling
+      this.authProvider.onError((error: AuthError) => {
+        console.error('Auth Error:', error.message);
+        this.handleAuthError(error);
+      });
+
+      // Check authentication status
+      this.isAuthenticated = await this.authProvider.isAuthenticated();
+
+      if (this.isAuthenticated) {
+        this.user = await this.authProvider.getUserProfile();
+      }
+    } catch (error) {
+      console.error('Auth initialization failed:', error);
+    }
+  }
+
+  async login() {
+    if (this.authProvider) {
+      await this.authProvider.login();
+    }
+  }
+
+  logout() {
+    if (this.authProvider) {
+      this.authProvider.logout();
+    }
+  }
+
+  private handleAuthError(error: AuthError) {
+    // Handle different error types
+    switch (error.code) {
+      case 'INVALID_REFRESH_TOKEN':
+        this.isAuthenticated = false;
+        break;
+      case 'PASSWORD_TOO_SHORT':
+        alert('Password must be at least 8 characters long');
+        break;
+      default:
+        alert(`Error: ${error.message}`);
+    }
+  }
+}
+```
+
+## Configuration
+
+### Auth0 Configuration
+
+```typescript
+// auth.config.ts
+export interface Auth0Config {
+  domain: string;                    // Required: Your Auth0 domain
+  clientId: string;                  // Required: Your Auth0 client ID
+  audience: string;                  // Required: Your API identifier
+  redirectUri?: string;              // Optional: Redirect URI (defaults to current origin)
+  scope?: string;                    // Optional: Requested scopes
+  responseType?: string;             // Optional: OAuth response type
+  cacheLocation?: 'localstorage' | 'sessionstorage'; // Optional: Token storage location
+  clientSecret?: string;             // Optional: For server-side operations only
+  managementApiAudience?: string;    // Optional: Management API audience
+}
+
+// Example configurations
+export const authConfig: Auth0Config = {
   domain: 'your-domain.auth0.com',
   clientId: 'your-client-id',
-  audience: 'your-audience-uri', // Required for Auth0
-  redirectUri: window.location.origin
+  audience: 'https://your-api.com',
+  redirectUri: window.location.origin,
+  scope: 'openid profile email offline_access',
+  cacheLocation: 'localstorage'
+};
+```
+
+### Environment-Specific Configuration
+
+```typescript
+// environment.ts
+export const environment = {
+  production: false,
+  auth0: {
+    domain: 'dev-company.auth0.com',
+    clientId: 'dev-client-id',
+    audience: 'https://dev-api.company.com'
+  }
 };
 
-// Initialize Auth0 provider
-async function initializeAuth() {
-  try {
-    const authClient = await UniversalAuth.createAuthProvider('auth0', auth0Config);
-    
-    // Check if user is already authenticated
-    if (authClient.isAuthenticated()) {
-      const profile = await authClient.getUserProfile();
-      console.log('User profile:', profile);
+// environment.prod.ts
+export const environment = {
+  production: true,
+  auth0: {
+    domain: 'company.auth0.com',
+    clientId: 'prod-client-id',
+    audience: 'https://api.company.com'
+  }
+};
+```
+
+## Angular Integration
+
+### Authentication Service
+
+```typescript
+// auth.service.ts
+import { Injectable } from '@angular/core';
+import { BehaviorSubject, Observable } from 'rxjs';
+import GMFCIAMAuth, { AuthProvider, UserProfile, AuthError } from 'GMF-CIAM-sdk';
+import { environment } from '../environments/environment';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class AuthService {
+  private authProvider: AuthProvider | null = null;
+  private isAuthenticatedSubject = new BehaviorSubject<boolean>(false);
+  private userSubject = new BehaviorSubject<UserProfile | null>(null);
+  private errorSubject = new BehaviorSubject<string | null>(null);
+
+  public isAuthenticated$ = this.isAuthenticatedSubject.asObservable();
+  public user$ = this.userSubject.asObservable();
+  public error$ = this.errorSubject.asObservable();
+
+  constructor() {
+    this.initializeAuth();
+  }
+
+  private async initializeAuth(): Promise<void> {
+    try {
+      this.authProvider = await GMFCIAMAuth.createAuthProvider('auth0', environment.auth0);
+
+      // Set up centralized error handling
+      this.authProvider.onError((error: AuthError) => {
+        this.handleAuthError(error);
+      });
+
+      // Check initial authentication status
+      const isAuthenticated = await this.authProvider.isAuthenticated();
+      this.isAuthenticatedSubject.next(isAuthenticated);
+
+      if (isAuthenticated) {
+        await this.loadUserProfile();
+      }
+    } catch (error) {
+      console.error('Auth initialization failed:', error);
+      this.errorSubject.next('Authentication system initialization failed');
+    }
+  }
+
+  async login(): Promise<void> {
+    if (this.authProvider) {
+      await this.authProvider.login();
+    }
+  }
+
+  logout(): void {
+    if (this.authProvider) {
+      this.authProvider.logout();
+      this.isAuthenticatedSubject.next(false);
+      this.userSubject.next(null);
+    }
+  }
+
+  async refreshToken(): Promise<boolean> {
+    if (this.authProvider) {
+      return await this.authProvider.refreshToken();
+    }
+    return false;
+  }
+
+  async getAccessToken(): Promise<string | null> {
+    if (this.authProvider) {
+      try {
+        return await this.authProvider.getAccessToken();
+      } catch (error) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  async resetPassword(email: string): Promise<string | null> {
+    if (this.authProvider) {
+      try {
+        return await this.authProvider.resetPassword(email);
+      } catch (error) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  async changePassword(oldPassword: string, newPassword: string): Promise<string | null> {
+    if (this.authProvider) {
+      try {
+        return await this.authProvider.changePassword(oldPassword, newPassword);
+      } catch (error) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  async updateProfile(updates: Partial<UserProfile>): Promise<UserProfile | null> {
+    if (this.authProvider) {
+      try {
+        const updatedProfile = await this.authProvider.updateUserProfile(updates);
+        this.userSubject.next(updatedProfile);
+        return updatedProfile;
+      } catch (error) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  private async loadUserProfile(): Promise<void> {
+    if (this.authProvider) {
+      try {
+        const profile = await this.authProvider.getUserProfile();
+        this.userSubject.next(profile);
+      } catch (error) {
+        console.error('Failed to load user profile:', error);
+      }
+    }
+  }
+
+  private handleAuthError(error: AuthError): void {
+    console.error(`Auth Error [${error.code}]:`, error.message);
+
+    switch (error.name) {
+      case 'AuthenticationError':
+        this.handleAuthenticationError(error);
+        break;
+      case 'TokenError':
+        this.handleTokenError(error);
+        break;
+      case 'ValidationError':
+        this.handleValidationError(error);
+        break;
+      case 'NetworkError':
+        this.handleNetworkError(error);
+        break;
+      default:
+        this.errorSubject.next(error.message);
+    }
+  }
+
+  private handleAuthenticationError(error: AuthError): void {
+    switch (error.code) {
+      case 'NOT_AUTHENTICATED':
+        this.isAuthenticatedSubject.next(false);
+        this.userSubject.next(null);
+        break;
+      case 'USER_NOT_FOUND':
+        this.errorSubject.next('No account found with this email address');
+        break;
+      case 'INCORRECT_PASSWORD':
+        this.errorSubject.next('The password you entered is incorrect');
+        break;
+      default:
+        this.errorSubject.next(`Authentication failed: ${error.message}`);
+    }
+  }
+
+  private handleTokenError(error: AuthError): void {
+    switch (error.code) {
+      case 'INVALID_REFRESH_TOKEN':
+      case 'TOKEN_EXPIRED':
+        this.isAuthenticatedSubject.next(false);
+        this.userSubject.next(null);
+        this.errorSubject.next('Your session has expired. Please log in again.');
+        break;
+      default:
+        this.errorSubject.next(`Token error: ${error.message}`);
+    }
+  }
+
+  private handleValidationError(error: AuthError): void {
+    this.errorSubject.next(error.message);
+  }
+
+  private handleNetworkError(error: AuthError): void {
+    if (error.details?.status >= 500) {
+      this.errorSubject.next('Service temporarily unavailable. Please try again later.');
     } else {
-      // Set up login button
-      document.getElementById('login-button').addEventListener('click', () => {
-        authClient.login();
+      this.errorSubject.next('Network error. Please check your connection.');
+    }
+  }
+
+  clearError(): void {
+    this.errorSubject.next(null);
+  }
+}
+```
+
+### Auth Guard
+
+```typescript
+// auth.guard.ts
+import { Injectable } from '@angular/core';
+import { CanActivate, Router } from '@angular/router';
+import { Observable } from 'rxjs';
+import { map, take } from 'rxjs/operators';
+import { AuthService } from './auth.service';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class AuthGuard implements CanActivate {
+  constructor(
+    private authService: AuthService,
+    private router: Router
+  ) {}
+
+  canActivate(): Observable<boolean> {
+    return this.authService.isAuthenticated$.pipe(
+      take(1),
+      map(isAuthenticated => {
+        if (!isAuthenticated) {
+          this.router.navigate(['/login']);
+          return false;
+        }
+        return true;
+      })
+    );
+  }
+}
+```
+
+### HTTP Interceptor
+
+```typescript
+// auth.interceptor.ts
+import { Injectable } from '@angular/core';
+import { HttpInterceptor, HttpRequest, HttpHandler, HttpEvent } from '@angular/common/http';
+import { Observable, from, throwError } from 'rxjs';
+import { switchMap, catchError } from 'rxjs/operators';
+import { AuthService } from './auth.service';
+
+@Injectable()
+export class AuthInterceptor implements HttpInterceptor {
+  constructor(private authService: AuthService) {}
+
+  intercept(req: HttpRequest<any>, next: HttpHandler): Observable<HttpEvent<any>> {
+    return from(this.authService.getAccessToken()).pipe(
+      switchMap(token => {
+        if (token) {
+          const authReq = req.clone({
+            setHeaders: {
+              Authorization: `Bearer ${token}`
+            }
+          });
+          return next.handle(authReq);
+        }
+        return next.handle(req);
+      }),
+      catchError(error => {
+        if (error.status === 401) {
+          this.authService.logout();
+        }
+        return throwError(error);
+      })
+    );
+  }
+}
+```
+
+## Authentication Methods
+
+### Login Component
+
+```typescript
+// login.component.ts
+import { Component } from '@angular/core';
+import { AuthService } from '../services/auth.service';
+import { Observable } from 'rxjs';
+
+@Component({
+  selector: 'app-login',
+  template: `
+    <div class="login-container">
+      <h2>Welcome to GMF Application</h2>
+      <div *ngIf="error$ | async as error" class="error-message">
+        {{ error }}
+      </div>
+      <button (click)="login()" class="login-button">
+        Login with Auth0
+      </button>
+    </div>
+  `
+})
+export class LoginComponent {
+  error$: Observable<string | null>;
+
+  constructor(private authService: AuthService) {
+    this.error$ = this.authService.error$;
+  }
+
+  async login(): Promise<void> {
+    await this.authService.login();
+  }
+}
+```
+
+### Dashboard Component
+
+```typescript
+// dashboard.component.ts
+import { Component, OnInit } from '@angular/core';
+import { AuthService } from '../services/auth.service';
+import { Observable } from 'rxjs';
+import { UserProfile } from 'GMF-CIAM-sdk';
+
+@Component({
+  selector: 'app-dashboard',
+  template: `
+    <div class="dashboard">
+      <div *ngIf="user$ | async as user" class="user-info">
+        <h2>Welcome, {{ user.name || user.email }}!</h2>
+        <img [src]="user.picture" [alt]="user.name" *ngIf="user.picture">
+        <div class="user-details">
+          <p><strong>Email:</strong> {{ user.email }}</p>
+          <p><strong>User ID:</strong> {{ user.sub }}</p>
+          <p><strong>Email Verified:</strong> {{ user.email_verified ? 'Yes' : 'No' }}</p>
+        </div>
+      </div>
+      
+      <div class="actions">
+        <button (click)="logout()" class="logout-button">Logout</button>
+        <button (click)="refreshToken()" class="refresh-button">Refresh Token</button>
+      </div>
+    </div>
+  `
+})
+export class DashboardComponent {
+  user$: Observable<UserProfile | null>;
+
+  constructor(private authService: AuthService) {
+    this.user$ = this.authService.user$;
+  }
+
+  logout(): void {
+    this.authService.logout();
+  }
+
+  async refreshToken(): Promise<void> {
+    const success = await this.authService.refreshToken();
+    if (success) {
+      console.log('Token refreshed successfully');
+    }
+  }
+}
+```
+
+## Profile Management
+
+### Profile Component
+
+```typescript
+// profile.component.ts
+import { Component, OnInit } from '@angular/core';
+import { FormBuilder, FormGroup, Validators } from '@angular/forms';
+import { AuthService } from '../services/auth.service';
+import { UserProfile } from 'GMF-CIAM-sdk';
+import { Observable } from 'rxjs';
+
+@Component({
+  selector: 'app-profile',
+  templateUrl: './profile.component.html'
+})
+export class ProfileComponent implements OnInit {
+  profileForm: FormGroup;
+  user$: Observable<UserProfile | null>;
+  isLoading = false;
+  message = '';
+
+  constructor(
+    private fb: FormBuilder,
+    private authService: AuthService
+  ) {
+    this.user$ = this.authService.user$;
+    
+    this.profileForm = this.fb.group({
+      name: ['', Validators.required],
+      nickname: [''],
+      phone_number: ['']
+    });
+  }
+
+  ngOnInit(): void {
+    this.user$.subscribe(user => {
+      if (user) {
+        this.profileForm.patchValue({
+          name: user.name || '',
+          nickname: user.nickname || '',
+          phone_number: user.phone_number || ''
+        });
+      }
+    });
+  }
+
+  async updateProfile(): Promise<void> {
+    if (this.profileForm.valid) {
+      this.isLoading = true;
+      this.message = '';
+
+      const updates = this.profileForm.value;
+      const result = await this.authService.updateProfile(updates);
+
+      if (result) {
+        this.message = 'Profile updated successfully!';
+      } else {
+        this.message = 'Failed to update profile. Please try again.';
+      }
+
+      this.isLoading = false;
+    }
+  }
+}
+```
+
+```html
+<!-- profile.component.html -->
+<div class="profile-container">
+  <h2>Update Profile</h2>
+  
+  <div *ngIf="message" [class]="message.includes('success') ? 'success-message' : 'error-message'">
+    {{ message }}
+  </div>
+
+  <form [formGroup]="profileForm" (ngSubmit)="updateProfile()">
+    <div class="form-group">
+      <label for="name">Full Name</label>
+      <input
+        id="name"
+        type="text"
+        formControlName="name"
+        class="form-control"
+        placeholder="Enter your full name">
+    </div>
+
+    <div class="form-group">
+      <label for="nickname">Nickname</label>
+      <input
+        id="nickname"
+        type="text"
+        formControlName="nickname"
+        class="form-control"
+        placeholder="Enter your nickname">
+    </div>
+
+    <div class="form-group">
+      <label for="phone_number">Phone Number</label>
+      <input
+        id="phone_number"
+        type="tel"
+        formControlName="phone_number"
+        class="form-control"
+        placeholder="Enter your phone number">
+    </div>
+
+    <button
+      type="submit"
+      [disabled]="!profileForm.valid || isLoading"
+      class="submit-button">
+      {{ isLoading ? 'Updating...' : 'Update Profile' }}
+    </button>
+  </form>
+</div>
+```
+
+## Password Management
+
+### Password Reset Component
+
+```typescript
+// password-reset.component.ts
+import { Component } from '@angular/core';
+import { FormBuilder, FormGroup, Validators } from '@angular/forms';
+import { AuthService } from '../services/auth.service';
+
+@Component({
+  selector: 'app-password-reset',
+  template: `
+    <div class="password-reset-container">
+      <h2>Reset Password</h2>
+      
+      <div *ngIf="message" [class]="messageClass">
+        {{ message }}
+      </div>
+
+      <form [formGroup]="resetForm" (ngSubmit)="resetPassword()">
+        <div class="form-group">
+          <label for="email">Email Address</label>
+          <input
+            id="email"
+            type="email"
+            formControlName="email"
+            class="form-control"
+            placeholder="Enter your email address">
+          <div *ngIf="resetForm.get('email')?.invalid && resetForm.get('email')?.touched" class="error">
+            Please enter a valid email address
+          </div>
+        </div>
+
+        <button
+          type="submit"
+          [disabled]="!resetForm.valid || isLoading"
+          class="submit-button">
+          {{ isLoading ? 'Sending...' : 'Send Reset Email' }}
+        </button>
+      </form>
+    </div>
+  `
+})
+export class PasswordResetComponent {
+  resetForm: FormGroup;
+  isLoading = false;
+  message = '';
+  messageClass = '';
+
+  constructor(
+    private fb: FormBuilder,
+    private authService: AuthService
+  ) {
+    this.resetForm = this.fb.group({
+      email: ['', [Validators.required, Validators.email]]
+    });
+  }
+
+  async resetPassword(): Promise<void> {
+    if (this.resetForm.valid) {
+      this.isLoading = true;
+      this.message = '';
+
+      const email = this.resetForm.value.email;
+      const result = await this.authService.resetPassword(email);
+
+      if (result) {
+        this.message = result;
+        this.messageClass = 'success-message';
+        this.resetForm.reset();
+      } else {
+        this.message = 'Failed to send reset email. Please try again.';
+        this.messageClass = 'error-message';
+      }
+
+      this.isLoading = false;
+    }
+  }
+}
+```
+
+### Change Password Component
+
+```typescript
+// change-password.component.ts
+import { Component } from '@angular/core';
+import { FormBuilder, FormGroup, Validators, AbstractControl } from '@angular/forms';
+import { AuthService } from '../services/auth.service';
+
+@Component({
+  selector: 'app-change-password',
+  templateUrl: './change-password.component.html'
+})
+export class ChangePasswordComponent {
+  passwordForm: FormGroup;
+  isLoading = false;
+  message = '';
+  messageClass = '';
+
+  constructor(
+    private fb: FormBuilder,
+    private authService: AuthService
+  ) {
+    this.passwordForm = this.fb.group({
+      currentPassword: ['', Validators.required],
+      newPassword: ['', [Validators.required, Validators.minLength(8)]],
+      confirmPassword: ['', Validators.required]
+    }, { validators: this.passwordMatchValidator });
+  }
+
+  passwordMatchValidator(control: AbstractControl): { [key: string]: boolean } | null {
+    const newPassword = control.get('newPassword');
+    const confirmPassword = control.get('confirmPassword');
+
+    if (newPassword && confirmPassword && newPassword.value !== confirmPassword.value) {
+      return { 'passwordMismatch': true };
+    }
+    return null;
+  }
+
+  async changePassword(): Promise<void> {
+    if (this.passwordForm.valid) {
+      this.isLoading = true;
+      this.message = '';
+
+      const { currentPassword, newPassword } = this.passwordForm.value;
+      const result = await this.authService.changePassword(currentPassword, newPassword);
+
+      if (result) {
+        this.message = result;
+        this.messageClass = 'success-message';
+        this.passwordForm.reset();
+      } else {
+        this.message = 'Failed to change password. Please try again.';
+        this.messageClass = 'error-message';
+      }
+
+      this.isLoading = false;
+    }
+  }
+}
+```
+
+## Error Handling
+
+### Error Display Component
+
+```typescript
+// error-display.component.ts
+import { Component, Input, Output, EventEmitter } from '@angular/core';
+
+@Component({
+  selector: 'app-error-display',
+  template: `
+    <div *ngIf="error" class="alert" [class.alert-error]="type === 'error'" [class.alert-warning]="type === 'warning'" [class.alert-success]="type === 'success'">
+      <span>{{ error }}</span>
+      <button *ngIf="dismissible" (click)="dismiss()" class="close-button">&times;</button>
+    </div>
+  `,
+  styles: [`
+    .alert {
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      border-radius: 4px;
+      position: relative;
+    }
+    .alert-error {
+      background-color: #fee;
+      color: #c53030;
+      border: 1px solid #feb2b2;
+    }
+    .alert-warning {
+      background-color: #fffbf0;
+      color: #c05621;
+      border: 1px solid #fbb040;
+    }
+    .alert-success {
+      background-color: #f0fff4;
+      color: #2f855a;
+      border: 1px solid #9ae6b4;
+    }
+    .close-button {
+      position: absolute;
+      right: 8px;
+      top: 8px;
+      background: none;
+      border: none;
+      font-size: 18px;
+      cursor: pointer;
+    }
+  `]
+})
+export class ErrorDisplayComponent {
+  @Input() error: string | null = null;
+  @Input() type: 'error' | 'warning' | 'success' = 'error';
+  @Input() dismissible = true;
+  @Output() dismissed = new EventEmitter<void>();
+
+  dismiss(): void {
+    this.dismissed.emit();
+  }
+}
+```
+
+### Global Error Handler
+
+```typescript
+// global-error.handler.ts
+import { Injectable } from '@angular/core';
+import { BehaviorSubject } from 'rxjs';
+
+export interface AppError {
+  message: string;
+  type: 'error' | 'warning' | 'success';
+  timestamp: Date;
+  id: string;
+}
+
+@Injectable({
+  providedIn: 'root'
+})
+export class GlobalErrorService {
+  private errorsSubject = new BehaviorSubject<AppError[]>([]);
+  public errors$ = this.errorsSubject.asObservable();
+
+  showError(message: string, type: 'error' | 'warning' | 'success' = 'error'): void {
+    const error: AppError = {
+      message,
+      type,
+      timestamp: new Date(),
+      id: Math.random().toString(36).substr(2, 9)
+    };
+
+    const currentErrors = this.errorsSubject.value;
+    this.errorsSubject.next([...currentErrors, error]);
+
+    // Auto-dismiss success messages after 5 seconds
+    if (type === 'success') {
+      setTimeout(() => {
+        this.dismissError(error.id);
+      }, 5000);
+    }
+  }
+
+  dismissError(id: string): void {
+    const currentErrors = this.errorsSubject.value;
+    const updatedErrors = currentErrors.filter(error => error.id !== id);
+    this.errorsSubject.next(updatedErrors);
+  }
+
+  clearAllErrors(): void {
+    this.errorsSubject.next([]);
+  }
+}
+```
+
+## TypeScript Support
+
+### Type Definitions
+
+```typescript
+// types/auth.types.ts
+import { UserProfile as SDKUserProfile, AuthError as SDKAuthError } from 'GMF-CIAM-sdk';
+
+// Extended user profile for Angular app
+export interface AppUserProfile extends SDKUserProfile {
+  roles?: string[];
+  permissions?: string[];
+  lastLogin?: Date;
+}
+
+// Extended auth error for Angular app
+export interface AppAuthError extends SDKAuthError {
+  userMessage?: string;
+  action?: 'retry' | 'login' | 'contact_support';
+}
+
+// Auth state interface
+export interface AuthState {
+  isAuthenticated: boolean;
+  user: AppUserProfile | null;
+  token: string | null;
+  error: string | null;
+  isLoading: boolean;
+}
+
+// Auth configuration with environment support
+export interface AppAuthConfig {
+  domain: string;
+  clientId: string;
+  audience: string;
+  redirectUri?: string;
+  scope?: string;
+  cacheLocation?: 'localstorage' | 'sessionstorage';
+  environment: 'development' | 'staging' | 'production';
+}
+```
+
+### Strongly Typed Service
+
+```typescript
+// strongly-typed-auth.service.ts
+import { Injectable } from '@angular/core';
+import { BehaviorSubject, Observable, throwError } from 'rxjs';
+import { catchError, map } from 'rxjs/operators';
+import GMFCIAMAuth, { AuthProvider, AuthError } from 'GMF-CIAM-sdk';
+import { AppUserProfile, AuthState, AppAuthConfig } from '../types/auth.types';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class StronglyTypedAuthService {
+  private authProvider: AuthProvider | null = null;
+  private authStateSubject = new BehaviorSubject<AuthState>({
+    isAuthenticated: false,
+    user: null,
+    token: null,
+    error: null,
+    isLoading: true
+  });
+
+  public authState$: Observable<AuthState> = this.authStateSubject.asObservable();
+  public isAuthenticated$: Observable<boolean> = this.authState$.pipe(
+    map(state => state.isAuthenticated)
+  );
+  public user$: Observable<AppUserProfile | null> = this.authState$.pipe(
+    map(state => state.user)
+  );
+
+  constructor() {}
+
+  async initialize(config: AppAuthConfig): Promise<void> {
+    try {
+      this.updateState({ isLoading: true, error: null });
+
+      this.authProvider = await GMFCIAMAuth.createAuthProvider('auth0', config);
+
+      this.authProvider.onError((error: AuthError) => {
+        this.handleAuthError(error);
+      });
+
+      const isAuthenticated = await this.authProvider.isAuthenticated();
+      
+      if (isAuthenticated) {
+        const user = await this.loadUserProfile();
+        const token = await this.authProvider.getAccessToken();
+        
+        this.updateState({
+          isAuthenticated: true,
+          user,
+          token,
+          isLoading: false
+        });
+      } else {
+        this.updateState({
+          isAuthenticated: false,
+          user: null,
+          token: null,
+          isLoading: false
+        });
+      }
+    } catch (error) {
+      this.updateState({
+        isAuthenticated: false,
+        user: null,
+        token: null,
+        error: 'Failed to initialize authentication',
+        isLoading: false
       });
     }
+  }
+
+  async login(): Promise<void> {
+    if (!this.authProvider) {
+      throw new Error('Auth provider not initialized');
+    }
+
+    try {
+      await this.authProvider.login();
+    } catch (error) {
+      this.updateState({ error: 'Login failed' });
+      throw error;
+    }
+  }
+
+  logout(): void {
+    if (this.authProvider) {
+      this.authProvider.logout();
+    }
     
-    // Set up logout button
-    document.getElementById('logout-button').addEventListener('click', () => {
-      authClient.logout();
+    this.updateState({
+      isAuthenticated: false,
+      user: null,
+      token: null,
+      error: null
     });
+  }
+
+  async getAccessToken(): Promise<string> {
+    if (!this.authProvider) {
+      throw new Error('Auth provider not initialized');
+    }
+
+    try {
+      const token = await this.authProvider.getAccessToken();
+      this.updateState({ token });
+      return token;
+    } catch (error) {
+      this.updateState({ error: 'Failed to get access token' });
+      throw error;
+    }
+  }
+
+  private async loadUserProfile(): Promise<AppUserProfile> {
+    if (!this.authProvider) {
+      throw new Error('Auth provider not initialized');
+    }
+
+    const profile = await this.authProvider.getUserProfile();
+    
+    // Extend with app-specific properties
+    const appProfile: AppUserProfile = {
+      ...profile,
+      roles: [], // Load from your API
+      permissions: [], // Load from your API
+      lastLogin: new Date()
+    };
+
+    return appProfile;
+  }
+
+  private updateState(updates: Partial<AuthState>): void {
+    const currentState = this.authStateSubject.value;
+    this.authStateSubject.next({ ...currentState, ...updates });
+  }
+
+  private handleAuthError(error: AuthError): void {
+    console.error(`Auth Error [${error.code}]:`, error.message);
+
+    let userMessage = error.message;
+    let shouldLogout = false;
+
+    switch (error.code) {
+      case 'INVALID_REFRESH_TOKEN':
+      case 'TOKEN_EXPIRED':
+        userMessage = 'Your session has expired. Please log in again.';
+        shouldLogout = true;
+        break;
+      case 'NOT_AUTHENTICATED':
+        userMessage = 'Please log in to access this feature.';
+        shouldLogout = true;
+        break;
+      case 'INVALID_EMAIL_FORMAT':
+        userMessage = 'Please enter a valid email address.';
+        break;
+      case 'PASSWORD_TOO_SHORT':
+        userMessage = 'Password must be at least 8 characters long.';
+        break;
+      case 'USER_NOT_FOUND':
+        userMessage = 'No account found with this email address.';
+        break;
+      case 'NETWORK_ERROR':
+        userMessage = 'Connection error. Please check your internet connection.';
+        break;
+    }
+
+    this.updateState({ error: userMessage });
+
+    if (shouldLogout) {
+      this.updateState({
+        isAuthenticated: false,
+        user: null,
+        token: null
+      });
+    }
+  }
+}
+```
+
+## Angular Examples
+
+### Complete App Module Setup
+
+```typescript
+// app.module.ts
+import { NgModule } from '@angular/core';
+import { BrowserModule } from '@angular/platform-browser';
+import { ReactiveFormsModule } from '@angular/forms';
+import { HttpClientModule, HTTP_INTERCEPTORS } from '@angular/common/http';
+import { RouterModule, Routes } from '@angular/router';
+
+import { AppComponent } from './app.component';
+import { LoginComponent } from './components/login.component';
+import { DashboardComponent } from './components/dashboard.component';
+import { ProfileComponent } from './components/profile.component';
+import { PasswordResetComponent } from './components/password-reset.component';
+import { ChangePasswordComponent } from './components/change-password.component';
+import { ErrorDisplayComponent } from './components/error-display.component';
+
+import { AuthService } from './services/auth.service';
+import { AuthGuard } from './guards/auth.guard';
+import { AuthInterceptor } from './interceptors/auth.interceptor';
+
+const routes: Routes = [
+  { path: '', redirectTo: '/dashboard', pathMatch: 'full' },
+  { path: 'login', component: LoginComponent },
+  { path: 'password-reset', component: PasswordResetComponent },
+  { path: 'dashboard', component: DashboardComponent, canActivate: [AuthGuard] },
+  { path: 'profile', component: ProfileComponent, canActivate: [AuthGuard] },
+  { path: 'change-password', component: ChangePasswordComponent, canActivate: [AuthGuard] }
+];
+
+@NgModule({
+  declarations: [
+    AppComponent,
+    LoginComponent,
+    DashboardComponent,
+    ProfileComponent,
+    PasswordResetComponent,
+    ChangePasswordComponent,
+    ErrorDisplayComponent
+  ],
+  imports: [
+    BrowserModule,
+    ReactiveFormsModule,
+    HttpClientModule,
+    RouterModule.forRoot(routes)
+  ],
+  providers: [
+    AuthService,
+    AuthGuard,
+    {
+      provide: HTTP_INTERCEPTORS,
+      useClass: AuthInterceptor,
+      multi: true
+    }
+  ],
+  bootstrap: [AppComponent]
+})
+export class AppModule { }
+```
+
+### Main App Component
+
+```typescript
+// app.component.ts
+import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Router } from '@angular/router';
+import { Subject } from 'rxjs';
+import { takeUntil } from 'rxjs/operators';
+import { AuthService } from './services/auth.service';
+import { GlobalErrorService, AppError } from './services/global-error.service';
+
+@Component({
+  selector: 'app-root',
+  template: `
+    <div class="app-container">
+      <!-- Global Error Display -->
+      <div class="error-container">
+        <app-error-display
+          *ngFor="let error of errors"
+          [error]="error.message"
+          [type]="error.type"
+          [dismissible]="true"
+          (dismissed)="dismissError(error.id)">
+        </app-error-display>
+      </div>
+
+      <!-- Navigation -->
+      <nav class="navbar" *ngIf="isAuthenticated">
+        <div class="nav-brand">GMF Application</div>
+        <div class="nav-links">
+          <a routerLink="/dashboard" routerLinkActive="active">Dashboard</a>
+          <a routerLink="/profile" routerLinkActive="active">Profile</a>
+          <button (click)="logout()" class="logout-btn">Logout</button>
+        </div>
+      </nav>
+
+      <!-- Loading Spinner -->
+      <div *ngIf="isLoading" class="loading-container">
+        <div class="spinner"></div>
+        <p>Loading...</p>
+      </div>
+
+      <!-- Main Content -->
+      <main class="main-content" *ngIf="!isLoading">
+        <router-outlet></router-outlet>
+      </main>
+    </div>
+  `,
+  styles: [`
+    .app-container {
+      min-height: 100vh;
+      background-color: #f5f5f5;
+    }
+    .error-container {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 1000;
+      max-width: 400px;
+    }
+    .navbar {
+      background: #fff;
+      padding: 1rem 2rem;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .nav-brand {
+      font-size: 1.5rem;
+      font-weight: bold;
+      color: #333;
+    }
+    .nav-links {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+    }
+    .nav-links a {
+      text-decoration: none;
+      color: #666;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      transition: background-color 0.2s;
+    }
+    .nav-links a:hover,
+    .nav-links a.active {
+      background-color: #e3f2fd;
+      color: #1976d2;
+    }
+    .logout-btn {
+      background: #dc3545;
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .loading-container {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid #3498db;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .main-content {
+      padding: 2rem;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+  `]
+})
+export class AppComponent implements OnInit, OnDestroy {
+  isAuthenticated = false;
+  isLoading = true;
+  errors: AppError[] = [];
+  private destroy$ = new Subject<void>();
+
+  constructor(
+    private authService: AuthService,
+    private errorService: GlobalErrorService,
+    private router: Router
+  ) {}
+
+  ngOnInit(): void {
+    // Subscribe to authentication state
+    this.authService.isAuthenticated$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(isAuth => {
+        this.isAuthenticated = isAuth;
+        this.isLoading = false;
+        
+        if (!isAuth && !this.router.url.includes('/login') && !this.router.url.includes('/password-reset')) {
+          this.router.navigate(['/login']);
+        }
+      });
+
+    // Subscribe to global errors
+    this.errorService.errors$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(errors => {
+        this.errors = errors;
+      });
+
+    // Subscribe to auth errors
+    this.authService.error$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(error => {
+        if (error) {
+          this.errorService.showError(error, 'error');
+          this.authService.clearError();
+        }
+      });
+  }
+
+  ngOnDestroy(): void {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+
+  logout(): void {
+    this.authService.logout();
+    this.router.navigate(['/login']);
+  }
+
+  dismissError(id: string): void {
+    this.errorService.dismissError(id);
+  }
+}
+```
+
+### Testing Components
+
+```typescript
+// testing/auth.service.spec.ts
+import { TestBed } from '@angular/core/testing';
+import { AuthService } from '../services/auth.service';
+
+// Mock GMF-CIAM-SDK
+jest.mock('GMF-CIAM-sdk', () => ({
+  default: {
+    createAuthProvider: jest.fn()
+  }
+}));
+
+describe('AuthService', () => {
+  let service: AuthService;
+  let mockAuthProvider: any;
+
+  beforeEach(() => {
+    mockAuthProvider = {
+      isAuthenticated: jest.fn(),
+      getUserProfile: jest.fn(),
+      login: jest.fn(),
+      logout: jest.fn(),
+      onError: jest.fn()
+    };
+
+    const GMFCIAMAuth = require('GMF-CIAM-sdk').default;
+    GMFCIAMAuth.createAuthProvider.mockResolvedValue(mockAuthProvider);
+
+    TestBed.configureTestingModule({});
+    service = TestBed.inject(AuthService);
+  });
+
+  it('should be created', () => {
+    expect(service).toBeTruthy();
+  });
+
+  it('should initialize authentication', async () => {
+    mockAuthProvider.isAuthenticated.mockResolvedValue(true);
+    mockAuthProvider.getUserProfile.mockResolvedValue({ sub: '123', email: 'test@example.com' });
+
+    await service['initializeAuth']();
+
+    expect(mockAuthProvider.isAuthenticated).toHaveBeenCalled();
+    expect(mockAuthProvider.getUserProfile).toHaveBeenCalled();
+  });
+
+  it('should handle login', async () => {
+    await service.login();
+    expect(mockAuthProvider.login).toHaveBeenCalled();
+  });
+
+  it('should handle logout', () => {
+    service.logout();
+    expect(mockAuthProvider.logout).toHaveBeenCalled();
+  });
+});
+```
+
+## API Reference
+
+### AuthService Methods
+
+#### Core Authentication
+- `login(): Promise<void>` - Initiates Auth0 login flow
+- `logout(): void` - Logs out user and clears state
+- `refreshToken(): Promise<boolean>` - Manually refreshes access token
+- `getAccessToken(): Promise<string | null>` - Gets current access token
+
+#### Profile Management
+- `resetPassword(email: string): Promise<string | null>` - Sends password reset email
+- `changePassword(oldPassword: string, newPassword: string): Promise<string | null>` - Changes user password
+- `updateProfile(updates: Partial<UserProfile>): Promise<UserProfile | null>` - Updates user profile
+
+#### State Observables
+- `isAuthenticated$: Observable<boolean>` - Authentication status stream
+- `user$: Observable<UserProfile | null>` - User profile stream
+- `error$: Observable<string | null>` - Error message stream
+
+### Configuration Options
+
+```typescript
+interface Auth0Config {
+  domain: string;              // Auth0 domain (required)
+  clientId: string;            // Auth0 client ID (required)
+  audience: string;            // API identifier (required)
+  redirectUri?: string;        // Redirect URI (default: current origin)
+  scope?: string;              // OAuth scopes (default: 'openid profile email offline_access')
+  cacheLocation?: 'localstorage' | 'sessionstorage'; // Token storage (default: 'localstorage')
+  clientSecret?: string;       // Client secret (server-side only)
+  managementApiAudience?: string; // Management API audience
+}
+```
+
+### Error Codes Reference
+
+#### Authentication Errors
+- `NOT_AUTHENTICATED` - User not logged in
+- `INVALID_STATE` - CSRF protection failed
+- `MISSING_AUTH_CODE` - Authorization code missing
+- `INCORRECT_PASSWORD` - Wrong password provided
+- `USER_NOT_FOUND` - Email not found in system
+- `INSUFFICIENT_PERMISSIONS` - Missing required permissions
+
+#### Token Errors  
+- `TOKEN_EXPIRED` - Access token has expired
+- `INVALID_REFRESH_TOKEN` - Refresh token is invalid or expired
+- `NO_REFRESH_TOKEN` - No refresh token available
+- `INVALID_ACCESS_TOKEN` - Access token is invalid
+- `NO_ACCESS_TOKEN` - No access token available
+
+#### Validation Errors
+- `MISSING_EMAIL` - Email required but not provided
+- `INVALID_EMAIL_FORMAT` - Invalid email format
+- `MISSING_PASSWORDS` - Password fields required
+- `PASSWORD_TOO_SHORT` - Password less than 8 characters
+- `PASSWORD_UNCHANGED` - New password same as current
+- `EMPTY_UPDATES` - No fields provided for update
+- `RESTRICTED_FIELD` - Attempted to update restricted field
+
+#### Network Errors
+- `NETWORK_ERROR` - Connection issues
+- `TOKEN_EXCHANGE_ERROR` - Failed to exchange authorization code
+- `TOKEN_REFRESH_ERROR` - Failed to refresh token
+- `PASSWORD_RESET_ERROR` - Failed to send reset email
+- `PROFILE_FETCH_ERROR` - Failed to load user profile
+- `PROFILE_UPDATE_ERROR` - Failed to update profile
+
+## Best Practices
+
+### Security Considerations
+
+1. **Token Storage**
+```typescript
+// Use secure token storage
+const config = {
+  domain: 'your-domain.auth0.com',
+  clientId: 'your-client-id',
+  audience: 'your-api-identifier',
+  cacheLocation: 'localstorage' // or 'sessionstorage' for higher security
+};
+```
+
+2. **Environment Variables**
+```typescript
+// environment.ts - Never commit secrets
+export const environment = {
+  production: false,
+  auth0: {
+    domain: process.env['AUTH0_DOMAIN'] || 'dev-domain.auth0.com',
+    clientId: process.env['AUTH0_CLIENT_ID'] || 'dev-client-id',
+    audience: process.env['AUTH0_AUDIENCE'] || 'https://dev-api.com'
+  }
+};
+```
+
+3. **HTTP Interceptor Security**
+```typescript
+// Only add tokens to API requests
+intercept(req: HttpRequest<any>, next: HttpHandler): Observable<HttpEvent<any>> {
+  // Only add auth header to your API calls
+  if (req.url.startsWith(environment.apiUrl)) {
+    return from(this.authService.getAccessToken()).pipe(
+      switchMap(token => {
+        if (token) {
+          const authReq = req.clone({
+            setHeaders: { Authorization: `Bearer ${token}` }
+          });
+          return next.handle(authReq);
+        }
+        return next.handle(req);
+      })
+    );
+  }
+  return next.handle(req);
+}
+```
+
+### Performance Optimization
+
+1. **Lazy Loading Authentication**
+```typescript
+// Load auth service only when needed
+@Injectable({
+  providedIn: 'root'
+})
+export class LazyAuthService {
+  private authService: AuthService | null = null;
+
+  async getAuthService(): Promise<AuthService> {
+    if (!this.authService) {
+      const { AuthService } = await import('./auth.service');
+      this.authService = new AuthService();
+      await this.authService.initialize(environment.auth0);
+    }
+    return this.authService;
+  }
+}
+```
+
+2. **Token Caching Strategy**
+```typescript
+// Implement token refresh with buffer time
+async getAccessToken(): Promise<string | null> {
+  if (this.authProvider) {
+    try {
+      // Refresh token 5 minutes before expiry
+      const bufferTime = 5 * 60 * 1000;
+      const now = new Date().getTime();
+      
+      if (this.tokenExpiresAt && (now + bufferTime) >= this.tokenExpiresAt) {
+        await this.authProvider.refreshToken();
+      }
+      
+      return await this.authProvider.getAccessToken();
+    } catch (error) {
+      return null;
+    }
+  }
+  return null;
+}
+```
+
+### Error Handling Best Practices
+
+1. **User-Friendly Error Messages**
+```typescript
+private getUserFriendlyMessage(error: AuthError): string {
+  const userMessages: Record<string, string> = {
+    'INVALID_EMAIL_FORMAT': 'Please enter a valid email address.',
+    'PASSWORD_TOO_SHORT': 'Password must be at least 8 characters long.',
+    'USER_NOT_FOUND': 'No account found with this email address.',
+    'NETWORK_ERROR': 'Connection problem. Please check your internet and try again.',
+    'TOKEN_EXPIRED': 'Your session has expired. Please log in again.'
+  };
+  
+  return userMessages[error.code] || 'Something went wrong. Please try again.';
+}
+```
+
+2. **Centralized Error Logging**
+```typescript
+private logError(error: AuthError): void {
+  // Log to console in development
+  if (!environment.production) {
+    console.error('Auth Error:', error);
+  }
+  
+  // Log to monitoring service in production
+  if (environment.production && window.analytics) {
+    window.analytics.track('auth_error', {
+      error_code: error.code,
+      error_name: error.name,
+      error_message: error.message,
+      timestamp: error.timestamp,
+      user_agent: navigator.userAgent,
+      url: window.location.href
+    });
+  }
+}
+```
+
+## Troubleshooting
+
+### Common Issues
+
+#### 1. "Auth provider not initialized"
+**Cause:** Attempting to use auth methods before initialization completes.
+
+**Solution:**
+```typescript
+// Wait for initialization in components
+async ngOnInit() {
+  // Subscribe to auth state instead of calling methods immediately
+  this.authService.isAuthenticated$.subscribe(isAuth => {
+    if (isAuth) {
+      // Now safe to call auth methods
+      this.loadUserData();
+    }
+  });
+}
+```
+
+#### 2. Token refresh fails continuously
+**Cause:** Invalid refresh token or network issues.
+
+**Solution:**
+```typescript
+// Implement retry logic with exponential backoff
+private async refreshTokenWithRetry(maxRetries = 3): Promise<boolean> {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const success = await this.authProvider?.refreshToken();
+      if (success) return true;
+    } catch (error) {
+      if (i === maxRetries - 1) {
+        // Max retries reached, force re-authentication
+        this.logout();
+        return false;
+      }
+      // Wait before retry (exponential backoff)
+      await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+    }
+  }
+  return false;
+}
+```
+
+#### 3. Route navigation issues after login
+**Cause:** Router navigation conflicts with Auth0 callback handling.
+
+**Solution:**
+```typescript
+// Handle navigation in auth callback
+async handleAuthCallback() {
+  try {
+    // Auth0 handles the callback automatically
+    const isAuthenticated = await this.authProvider?.isAuthenticated();
+    
+    if (isAuthenticated) {
+      // Get intended route from local storage or default to dashboard
+      const returnUrl = localStorage.getItem('returnUrl') || '/dashboard';
+      localStorage.removeItem('returnUrl');
+      this.router.navigate([returnUrl]);
+    }
   } catch (error) {
-    console.error('Authentication error:', error);
+    this.router.navigate(['/login']);
+  }
+}
+```
+
+#### 4. Memory leaks in components
+**Cause:** Not unsubscribing from observables.
+
+**Solution:**
+```typescript
+// Use takeUntil pattern in all components
+export class MyComponent implements OnInit, OnDestroy {
+  private destroy$ = new Subject<void>();
+
+  ngOnInit() {
+    this.authService.user$
+      .pipe(takeUntil(this.destroy$))
+      .subscribe(user => {
+        // Handle user changes
+      });
+  }
+
+  ngOnDestroy() {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+}
+```
+
+### Debug Mode
+
+Enable comprehensive debugging:
+
+```typescript
+// Enable debug logging
+if (!environment.production) {
+  localStorage.setItem('gmf-ciam-debug', 'true');
+}
+
+// Add debug interceptor
+export class DebugInterceptor implements HttpInterceptor {
+  intercept(req: HttpRequest<any>, next: HttpHandler): Observable<HttpEvent<any>> {
+    console.log('HTTP Request:', req);
+    
+    return next.handle(req).pipe(
+      tap(event => {
+        if (event instanceof HttpResponse) {
+          console.log('HTTP Response:', event);
+        }
+      }),
+      catchError(error => {
+        console.error('HTTP Error:', error);
+        return throwError(error);
+      })
+    );
+  }
+}
+```
+
+### Testing Authentication
+
+```typescript
+// Mock auth service for testing
+export class MockAuthService {
+  private isAuthenticatedSubject = new BehaviorSubject<boolean>(false);
+  private userSubject = new BehaviorSubject<UserProfile | null>(null);
+
+  isAuthenticated$ = this.isAuthenticatedSubject.asObservable();
+  user$ = this.userSubject.asObservable();
+
+  setAuthenticated(isAuth: boolean, user?: UserProfile) {
+    this.isAuthenticatedSubject.next(isAuth);
+    this.userSubject.next(user || null);
+  }
+
+  async login(): Promise<void> {
+    this.setAuthenticated(true, {
+      sub: 'test-user-id',
+      email: 'test@example.com',
+      name: 'Test User'
+    });
+  }
+
+  logout(): void {
+    this.setAuthenticated(false);
   }
 }
 
-// Call the initialization function when the page loads
-document.addEventListener('DOMContentLoaded', initializeAuth);
+// Use in tests
+beforeEach(() => {
+  TestBed.configureTestingModule({
+    providers: [
+      { provide: AuthService, useClass: MockAuthService }
+    ]
+  });
+});
+```
+
+## Support
+
+### Getting Help
+
+- **Documentation**: This comprehensive guide
+- **GitHub Issues**: [GitHub Repository Issues](https://github.com/gmf/ciam-sdk/issues)
+- **Stack Overflow**: Tag your questions with `gmf-ciam-sdk` and `angular`
+- **Email Support**: support@gmf.com
+
+### Reporting Issues
+
+When reporting bugs, include:
+
+1. **Angular Version**: `ng version`
+2. **SDK Version**: Check `package.json`
+3. **Browser/Environment**: Chrome/Firefox version, mobile device
+4. **Configuration**: Sanitized Auth0 configuration (remove secrets)
+5. **Error Details**: Full error message, stack trace, console logs
+6. **Reproduction Steps**: Minimal Angular component that demonstrates the issue
+
+### Feature Requests
+
+Submit feature requests with:
+
+1. **Use Case**: Specific Angular scenario you're trying to solve
+2. **Current Workaround**: How you're currently handling this
+3. **Proposed API**: How you think the feature should work in Angular
+4. **Impact**: How many Angular developers would benefit
+
+---
+
+**Version**: 2.0.0  
+**Angular Compatibility**: 12.x - 17.x  
+**Last Updated**: June 2025  
+**License**: MIT
